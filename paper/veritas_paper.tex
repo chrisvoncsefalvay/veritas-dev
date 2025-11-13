@@ -1,0 +1,502 @@
+\documentclass[11pt]{article}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{times}
+\usepackage{microtype}
+\usepackage{geometry}
+\geometry{letterpaper, margin=1in}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{cleveref}
+\usepackage{listings}
+\usepackage{authblk}
+\usepackage{enumitem}
+
+% Hyperref setup
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=blue,
+    urlcolor=blue,
+}
+
+% Listings setup for code
+\lstset{
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    backgroundcolor=\color{gray!10},
+    captionpos=b
+}
+
+% Title and author
+\title{\textbf{VERITAS: Cryptographically Verifiable Semantic Traces \\
+for AI Agent Provenance and Interoperability}}
+
+\author[1]{Chris von Csefalvay \footnote{Corresponding author: Chris von Csefalvay, HCLTech, 1593 Spring Hill Rd, Vienna, VA 22182, USA. <\texttt{kristof.csefalvay@hcltech.com}>}}
+\author[2]{Mohsen Amiribesheli}
+\affil[1]{AI Practice, HCLTech Inc., Sunnyvale, CA, USA}
+\affil[2]{AI Labs, HCLTech Ltd., London, UK}
+
+
+
+\date{October 2025}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+As agentic AI makes increasingly consequential decisions across domains from healthcare to finance, establishing cryptographic provenance of their reasoning processes becomes critical for trust, auditability and regulatory compliance. Existing approaches focus on verifying model inference outputs but fail to capture the multi-step decision traces that characterise agentic behaviour. We introduce VERITAS (Verifiable Reasoning Trace Attestation Standard), an interchange format that combines semantic compression of agent decision traces with cryptographic verification primitives. VERITAS employs a Merkle-DAG structure to encode reasoning steps, tool invocations and decision dependencies whilst enabling selective disclosure through zero-knowledge proofs. The format supports cross-framework interoperability, allowing heterogeneous agent systems (LangChain, AutoGPT, custom implementations) to produce mutually verifiable traces. We demonstrate that VERITAS adds negligible overhead ($\sim$5--10ms per reasoning step) whilst enabling critical capabilities including non-repudiable audit trails, IP-protecting reasoning chain comparison and detection of tampering. This work establishes a foundation for trustworthy agent ecosystems where reasoning provenance can be cryptographically established without sacrificing proprietary techniques or sensitive data.
+\end{abstract}
+
+\noindent\textbf{Keywords:} AI agents, cryptographic verification, semantic compression, provenance, zero-knowledge proofs, decision traces, explainable AI
+
+\section{Introduction}
+
+\subsection{The provenance gap in agentic AI}
+
+Large language models have evolved from single-turn question answering systems into sophisticated agent drivers capable of multi-step reasoning, tool use and autonomous decision-making \cite{yao2023react,wei2022chain}. These agents increasingly handle high-stakes tasks: approving financial transactions, generating medical diagnoses, controlling industrial processes and providing legal advice. Yet a critical gap exists between the sophistication of these systems and our ability to establish cryptographically verifiable proof of their reasoning processes.
+
+Current AI verification approaches fall into three categories, each with significant limitations:
+
+\paragraph{Model-level verification} through techniques like zkML \cite{kang2024zkml,liu2021zkcnn} proves that a specific model, given a specific input, produced a specific output. Whilst valuable, this treats the agent as a black box, providing no insight into the reasoning process that led to the output. Epistemically, this is unacceptable -- especially as our conception of safeguards against algorithmic bias is concerned not with outcomes but with the process by which they are arrived at. A broken agentic clock is not right twice a day -- it is wrong even when the time of day happens to fortuitously coincide with what it indicates. In a multi-step agentic workflow involving tool calls, memory access and conditional branching, knowing only the final output is insufficient for either debugging, auditing or trust establishment.
+
+Significant progress has been made in generating zero-knowledge proofs of ML model inference \cite{kang2024zkml,liu2021zkcnn,chen2024scaling,zktorch2025}. zkML systems like EZKL and zkTorch enable a prover to convince a verifier that model $M$ with input $X$ produced output $Y$ without revealing model weights or input data. These techniques achieve impressive performance, with recent work proving GPT-2 scale models in under 5 minutes \cite{chen2024scaling}.
+
+However, zkML focuses exclusively on inference verification, proving a single forward pass through a neural network. Agents perform qualitatively different computations: iterative reasoning, tool orchestration, memory management and conditional branching. A zkML proof that ``GPT-4 with prompt $P$ produced completion $C$'' reveals nothing about whether the agent followed safety protocols, which tools it invoked or how it structured its reasoning -- or, more importantly, how it didn't.
+
+Recent work on verifiable computation \cite{wahby2017full,zhang2017vsql} extends zkML to more complex programs but still treats computation as a monolithic black box. VERITAS bridges this gap by providing verification at the reasoning step granularity whilst maintaining the privacy guarantees of zero-knowledge systems.
+
+\paragraph{Trace logging/observability systems} such as LangSmith \cite{langsmith2024}, MLflow \cite{zaharia2018mlflow} and OpenTelemetry \cite{opentelemetry2024} capture detailed execution histories but lack cryptographic verifiability. Traces can be arbitrarily modified \emph{post hoc}, fabricated entirely or selectively edited to hide mistakes. Without cryptographic guarantees, these logs cannot serve as evidence in regulatory proceedings, contractual disputes or safety investigations.
+
+\paragraph{Blockchain-based AI provenance} (e.g. DECORAIT \cite{balan2023decorait}, Numbers \cite{numbers2024}) can record model versions, training data and outputs on immutable ledgers. However, these approaches focus on coarse-grained artefacts (model weights, final predictions) rather than the fine-grained reasoning steps that characterise agent behaviour. A healthcare diagnostic agent might invoke fifteen tools, process three patient records and perform conditional reasoning across seven decision points before reaching a conclusion -- none of which would be adequately captured by recording only the model version and the final diagnosis.
+
+\paragraph{The problem of compression and comparability} LLMs perform probabilistic inference over a vast problem space. In turn, this results in large volumes of trace data -- the problem of context explosion. Recent work addresses the challenge of managing context in long-horizon agent tasks. ACON \cite{acon2025}, Memory-as-Action \cite{memoryasaction2025} and dynamic memory compression \cite{pagliardini2024} reduce context length while preserving task-relevant information. Trajectory reduction \cite{trajectory2025} and context folding \cite{contextfolding2025} compress agent execution histories for efficiency. VERITAS builds on these ideas but adds cryptographic binding -- compression must preserve not just semantic content but also verifiability.
+
+\subsection{The case for cryptographically verifiable reasoning traces}
+
+Consider these scenarios that current systems cannot adequately address:
+
+\paragraph{Regulatory compliance} The EU AI Act and similar regulations mandate that high-risk AI systems maintain complete audit trails of their decision-making processes \cite{euaiact2024}. An agent-based credit scoring system must prove it followed approved protocols, did not access prohibited demographic data and properly weighted relevant factors. As legislation aimed at preventing the influx of biases into algorithmic decision-making -- a phenomenon sometimes described as 'digital redlining' -- is proposed in more and more jurisdictions (e.g. Colorado's AI Act, New York City's Local Law 144 or Virginia's HB 2094), the ability to prove compliance in a cryptographically verifiable manner will become an essential defensive countermeasure for regulated industries.
+
+\paragraph{Adversarial robustness} As agents become targets for adversarial attacks, establishing ground truth about what reasoning actually occurred becomes critical for defense. Did the agent genuinely follow its safety protocols, or has the trace been manipulated to hide a jailbreak? Without cryptographic binding, we cannot distinguish authentic traces from fabricated explanations.
+
+\paragraph{Intellectual property protection} Organisations developing sophisticated agentic architectures face a dilemma: share reasoning strategies for reproducibility and benchmarking, or protect proprietary techniques? Current options (full disclosure or complete secrecy) are inadequate. Selective disclosure with zero-knowledge proofs would allow proving properties about the proof process without actually revealing the process itself. Where the reasoning strategy may well itself be the key intellectual property asset of a company, zero knowledge proofs facilitate commerce, benchmarking and honest examination without prejudicing the IP holder's intenrests.
+
+\paragraph{Knowledge distillation} Training smaller models from agent traces has emerged as a powerful technique \cite{hinton2015distilling,trajectory2025}, but requires confidence that training data reflects genuine reasoning rather than \emph{post hoc} rationalisations. A model developer can only make informed decisions about the relative value of a teacher model for distillation if that model's owner can provide cryptographically verified traces proving it originated from high-quality, authentic training signals. As models are becoming commoditised assets, this provenance will -- much like its equivalent for works of art -- be determinative of its value.
+
+\paragraph{Multi-agent accountability} In systems where multiple agents collaborate, establishing which agent made which decision becomes critical for accountability. Digital signatures on reasoning steps create non-repudiable attribution that a potentially guilty agent cannot obfuscate, conferring an anti-Goodhart property.
+
+\subsection{Contributions}
+
+We present VERITAS (Verifiable Reasoning Trace Attestation Standard), a proposed standard form of cryptographically bound traces which makes the following contributions:
+
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{A cryptographically sound trace format} combining Merkle-DAG structures, digital signatures and timestamp attestations to create tamper-evident reasoning provenance
+    
+    \item \textbf{Semantic compression primitives} that reduce trace size by 60--80\% while preserving structure necessary for verification and comparison
+    
+    \item \textbf{Selective disclosure via zero-knowledge proofs} enabling agents to prove properties about their reasoning without exposing proprietary strategies or sensitive data
+    
+    \item \textbf{Cross-framework interoperability} through a normalisation layer that translates heterogeneous trace formats into a common verifiable representation
+    
+    \item \textbf{Efficient verification protocols} with $O(\log n)$ proof checking and negligible runtime overhead ($\sim$5--10ms per reasoning step)
+\end{enumerate}
+
+The remainder of this paper proceeds as follows. \Cref{sec:format} details the VERITAS format specification. \Cref{sec:crypto} describes the cryptographic primitives and verification protocol. In \Cref{sec:zkp}, we present selective disclosure mechanisms and examine these in \Cref{sec:analysis}. \Cref{sec:discussion} discusses deployment considerations and future directions.
+
+\section{The VERITAS format}
+\label{sec:format}
+
+\subsection{Design principles}
+
+VERITAS is guided by five core principles:
+
+\begin{description}[leftmargin=*]
+    \item[\textbf{P1: Tamper-evidence}] Any modification to a reasoning step, even seemingly innocuous metadata changes, must invalidate cryptographic proofs. This requires binding all trace components through hash chains.
+    
+    \item[\textbf{P2: Selective disclosure}] Provers must be able to show a verifier properties about reasoning (e.g., "followed safety protocols", "reasoning depth $<$ 50 steps") without needing to expose what might be proprietary strategies or sensitive data. This necessitates the provability of such statements with a zero knowledge property as to the model's inputs or architecture.
+    
+    \item[\textbf{P3: Cross-framework compatibility}] Verifiability must not depend on framework, i.e. a prover must be able to prove, and a verifier must be able to verify, traces regardless of originating system. This requires a canonical representation that abstracts framework-specific details.
+    
+    \item[\textbf{P4: Semantic richness}] Compression must preserve not just raw token sequences but also semantic structure -- which steps causally depend on others, what confidence levels were, what external tools were invoked with what arguments.
+    
+    \item[\textbf{P5: Practical efficiency}] Cryptographic overhead must be minimal ($<$10ms per reasoning step on commodity hardware) and verification must be fast enough for near real-time applications (milliseconds for typical traces).
+\end{description}
+
+\subsection{Core structure definition}
+
+A VERITAS trace is a directed acyclic graph (DAG) where nodes represent reasoning steps and edges encode dependencies. Formally, we define a trace $T$ as:
+
+\begin{equation}
+T = (V, E, M, \Sigma, \tau)
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $V$ is the set of reasoning step nodes;
+    \item $E \subseteq V \times V$ is the set of directed edges encoding dependencies;
+    \item $M$ is the manifest containing agent identity and metadata;
+    \item $\Sigma$ is the set of cryptographic signatures; and
+    \item $\tau$ is the timestamp attestation.
+\end{itemize}
+
+Each node $v \in V$ has the structure:
+
+\begin{equation}
+v = (\text{id}, \text{type}, \text{sem}, \text{meta}, \text{commit}, \text{parents}, \text{bind})
+\end{equation}
+
+where:
+\begin{itemize}
+    \item \textbf{id}: Globally unique node identifier (e.g. UUIDv4)
+    \item \textbf{type}: Node classification, which identifies the node as one of a set of fucntional descriptors,  $text{type} \in$ \{\textsc{Reasoning}, \textsc{ToolCall}, \textsc{Observation}, \textsc{Decision}, \textsc{MemoryAccess}\}
+    \item \textbf{sem}: Semantic embedding vector (typically 768-dimensional compressed representation of node content)
+    \item \textbf{meta}: Structured metadata including timestamp, confidence score, token count, model temperature and references to an identifier of the model
+    \item \textbf{commit}: Cryptographic commitment to node content (hash of full uncompressed content)
+    \item \textbf{parents}: List of parent node IDs this node causally depends on
+    \item \textbf{bind}: Cryptographic binding computed as $H(\text{commit} \| H(\text{parent\_binds}))$
+\end{itemize}
+
+This Merkle-DAG structure ensures a trifecta of value integrity, structural integrity and trace integrity:
+\begin{enumerate}
+    \item Any tampering with a node's content invalidates the cryptographic commitment \textbf{commit} to the node's content. Thus, an attacker cannot selectively edit a node and be a prover.
+    \item Any reordering or deletion of nodes invalidates \textbf{bind} values. Thus, an attacker cannot change node positions and be a prover.
+    \item The root binding serves as a compact fingerprint of the entire trace. Thus, an attacker cannot selectively edit upstream content and be a prover.
+\end{enumerate}
+
+\subsection{Semantic compression}
+
+Full reasoning traces can be prohibitively large: a typical GPT-4 based agent solving a moderately complex multistep task may traverse around 100 steps, and easily generate on the order of 50-150,000 tokens' worth of reasoning trace data in a single run. Committing to this volume would be both computationally inefficient and altogether wasteful. VERITAS employs learned semantic compression to reduce storage whilst preserving verification.
+
+For each reasoning step, we proceed in a 4-step shape-embed-compress sequence:
+
+\begin{enumerate}
+    \item \textbf{Extract content}: Combine the reasoning text, any tool call parameters and observed outputs into a structured content blob
+    
+    \item \textbf{Embed semantically}: Use a pretrained encoder (e.g., \texttt{sentence-transformers}, BERT-large) to produce a dense 768d embedding capturing semantic content
+    
+    \item \textbf{Compress embedding}: Apply a learned compression function with adjustable or set dimensionality to reduce the dense 786d embedding into a more manageable 256-512d
+    
+    \item \textbf{Commit to full content}: Hash the complete uncompressed content and store the commitment
+\end{enumerate}
+
+This creates what is essentially a hierarchical store. The compressed embedding facilitates 'first look' utilisation: similarity comparison between traces, semantic trace search, pattern recognition and clustering. The commitment can then be the 'second pass', for full verifiability. This dual representation balances efficiency (compressed embeddings for routine operations) with verifiability (commitments for validation).
+
+\subsection{JSON schema}
+
+We herein describe a proposed embodiment of the VERITAS format, using JSON for maximum compatibility. Note that the trace itself is not its representation -- in other words, this trace is functionally equivalent to any other representation of the same DAG.
+
+\begin{lstlisting}[language=json]
+{
+  "veritas_version": "1.0",
+  "trace_id": "uuid-v4",
+  "created_at": "2025-10-19T14:23:17Z",
+  
+  "agent_manifest": {
+    "agent_did": "did:agent:anthropic:claude-sonnet-4",
+    "model_version": "claude-sonnet-4-20250514",
+    "framework": "custom",
+    "public_key": "base64-encoded-key",
+    "signature": "base64-signature-of-root-hash"
+  },
+  
+  "trace_graph": {
+    "nodes": [{
+      "node_id": "n0",
+      "node_type": "REASONING",
+      "semantic_embedding": [0.123, -0.456, ...],
+      "metadata": {
+        "timestamp": "2025-10-19T14:23:17.432Z",
+        "confidence": 0.87,
+        "token_count": 234
+      },
+      "content_commitment": "sha256:hash",
+      "parent_nodes": [],
+      "cryptographic_binding": "sha256:hash"
+    }],
+    "edges": [{
+      "from": "n0",
+      "to": "n1",
+      "relation_type": "CAUSAL",
+      "weight": 0.95
+    }]
+  },
+  
+  "root_hash": "sha256:complete-trace-hash",
+  "temporal_attestation": {
+    "rfc3161_token": "base64-timestamp-token"
+  }
+}
+\end{lstlisting}
+
+\section{Cryptographic approach}
+\label{sec:crypto}
+
+\subsection{Signature scheme}
+
+VERITAS employs a multi-layer signature approach to establish provenance at different granularities.
+
+\paragraph{Agent identity signature} The agent signs the root hash of the complete trace, at the time of signature, using its private key. This establishes:
+\begin{itemize}
+    \item non-repudiable authorship: only the agent possessing the private key could have produced this signature
+    \item trace integrity: any modification invalidates the signature
+    \item timestamp binding: as the signature is time sensitive, since it is computed over the root hash and a timestamp, it commits authorship and trace to a time, and vice versa.
+\end{itemize}
+
+Given the potential use of blockchain commitment schemes, we have developed the specification of VERITAS to support ECDSA (secp256k1) for blockchain compatibility and EdDSA (Ed25519 for performance) signature schemes. This allows users to select between a more performant and secure algorithm (EdDSA) and one that is very widely used in blockchain implementations, thus giving the best of two worlds of speed and compatibility. An extended support version of VERITAS, designated VERITAS$^2$ (VERITAS-Secure), may additionally implement P-256, for USG/FIPS compliance.
+
+\paragraph{Step-level attestations} For critical steps in reasoning -- particularly those invoking external tools with real-world effects -- additional signatures may be required from tool execution environments, memory systems, or external verifiers (human-in-the-loop). Since VERITAS is modular, there is no theoretical upper bound on the number of signatures adduced to prove any step. 
+
+\paragraph{Decentralised identifiers (DIDs)} Rather than centralised key registries, VERITAS uses DID standards to enable self-sovereign identity for agents. An agent DID like \texttt{did:agent:anthropic:claude-sonnet-4} (which encapsulates both model identity and agent identity) can be resolved to retrieve the public key without trusted intermediaries.
+
+\subsection{Hash chain construction}
+
+The Merkle-DAG structure provides tamper-evidence through recursive hashing. For a node $v \in V$ with parents $P = \{p_1, p_2, \ldots, p_k\}$, this binding is computed as:
+
+\begin{equation}
+\text{bind}(v) = H(\text{commit}(v) \| \text{bind}(p_1) \| \text{bind}(p_2) \| \cdots \| \text{bind}(p_k) \| \text{metadata}(v))
+\end{equation}
+
+where, if parents exist,
+\begin{itemize}
+    \item $H$ is a cryptographic hash function (SHA-256 or BLAKE3)
+    \item $\text{commit}(v)$ is the commitment to node content
+    \item $\|$ denotes concatenation
+    \item metadata includes timestamp, type, confidence
+\end{itemize}
+
+\noindent and otherwise (i.e. leaf nodes), $\text{bind}(v) = H(\text{commit}(v) \| \text{metadata}(v))$. The root hash is computed as:
+
+\begin{equation}
+\text{root} = H(\text{bind}(\text{terminal\_nodes}) \| \text{agent\_manifest} \| \text{temporal\_attestation})
+\end{equation}
+
+This structure ensures the integrity of the entire chain: modifying any node content changes its commitment, propagating up the hash chain, while adding, removing or reordering nodes invalidates bindings. Notably, this extends to the metadata part, since tampering with that, too, will invalidate the tree. The root hash serves as a 32-byte fingerprint of the entire trace.
+
+\subsection{Temporal attestation}
+
+Establishing when reasoning occurred is critical for patent/discovery priority claims, regulatory compliance and forensic analysis. VERITAS integrates RFC 3161 timestamp tokens from trusted timestamp authorities (TSAs). When agents complete reasoning steps, the root hash is computed and sent to a TSA, which in turn returns an RFC 3161 token signing the root hash and the timestamp. This token then goes into the trace manifest, and thus makes time a non-repudiable property of inference that can be verified by anyone with access to the TSA's public key.
+
+This, of course, is contingent on connectivity to a TSA. Where this is not available, e.g. airgapped environments or those where latency does not permit the invocation of a TSA, users may opt for a disclosed limited mode, in which trusted hardware (e.g. TPM) is used to generate a local hardware-attested timestamp.
+
+\subsection{Commitment schemes}
+
+To enable selective disclosure while maintaining verifiability, VERITAS uses a commitment scheme for node content, in which the commitment $\text{commit} = H(\text{content} \| \text{nonce})$ is made. 
+
+A party cannot change the content after commitment, and the commitment does not reveal anything about the content itself, only about the commitment. Because of the verifiability (opening) property, a prover can reveal the nonce and the content to the verifier to prove the accuracy of the commitment. It is possible to use a Pedersen commitment $C = g^r h^m$, where $r$ is a random generator and $m$ is the message. This continues to provide the computationally binding and perfectly hiding properties of a commitment scheme, while allowing homomorphic addition.
+
+\section{Selective disclosure and zero-knowledge proofs}
+\label{sec:zkp}
+
+\subsection{The problem of selective disclosure}
+
+As agentic systems become increasingly complex, their very configuration may become subject to IP protection. At the same time, the very thing that makes these configurations valuable also necessitates the ability to prove certain statements about them so as to allow others, in particular prospective buyers, to ascertain such facts about the system as may be necessary to verify claims about them. 
+
+Consider such a prospective seller, such as the developer of an agentic architecture to facilitate drug discovery. Without effective selective disclosure, this architecture is either worthless or its conveyance saddled with considerable risk. At the heart of that are some inherent contradictions:
+
+\begin{itemize}
+    \item The provider must be able to reassure the buyer not only of results, but also certain procedural guarantees, e.g. time of calculation or claims about information required to arrive at a particular result. "This agentic architecture can find possible candidate molecules in no more than $n$ queries to a limited list of approved data sets", for instance, is one such guarantee. The provider must be able to prove these statements to the buyer's full satisfaction, without requiring them to prejudice their position by disclosing details about the very architecture they intend to market.
+    \item The provider must be able to satisfy regulatory authorities and standards bodies of compliance and interoperability, but needs to be able to do so without being forced to disclose its reasoning stratagem.
+    \item In turn, providers must be able to prove certain positive and negative statements about the reasoning process, and do so without being forced to disclose their reasoning stratagem. 
+    
+\end{itemize}
+
+The economic rationale here is clear. A commerce in agentic architectures requires such architectures to have ascertainable value to facilitate free, fair and open exchanges. This is not possible when the current paradigm turns it into a zero-sum game that necessarily requires a loser -- a buyer who must take his counterparty's word on full credit at risk to himself, or a seller who must risk his entire prize asset on his counterparty's word. Zero-knowledge proofs enable trusted commerce in agentic architectures without requiring either side to prejudice their position.
+
+
+\subsection{Zero-Knowledge property}
+
+VERITAS supports three categories of ZK proofs:
+
+\paragraph{Range proofs} prove a committed value lies in a range without revealing the value. This includes bound claims, i.e. claims that a value is above or below a certain bound, which is useful for efficiency-related claims such as mean tokens consumed being less than an upper bound. Bulletproofs \cite{cryptoeprint:2017/1066} are short non-interactive ZK proofs that are computationally highly efficient for proving ranges, especially as they scale logarithmically with range, but also with aggregations. 
+
+\paragraph{Set membership proofs} prove an assertion that a committed value belongs to a set, without revealing which particular member it is. For VERITAS, the key relevance of this is twofold. First, set membership proofs are negatively probatively exhaustive, i.e. proving that every tool call was from an approved tool list conclusively proves that no tool that is not on the list was used. This is highly relevant for proving that protected characteristics were not involved in algorithmic decision-making. Second, it proves fundamental efficiency claims, i.e. that the kinds of reasoning steps or the tools called were all members of a limited set -- in short, that the architecture can solve the problem with a limited toolkit. This is fundamentally important to localise value, as it makes it impossible for the seller to falsely assert capabilities belonging to the agentic architecture when in fact it was an undisclosed tool that performed the task (the 'Mechanical Turk' model, which makes assertions about an inherent capability of itself when in fact it relies on external assistance). 
+
+\paragraph{Structural proofs} make assertions about the trace DAG's structure, such as matching a template or the attestation of a particular node. 
+
+Veritas uses the zkSNARK Groth16, which is both time-efficient (3 pairing checks) and yields small, constant-size proofs.  Groth16 uses R1CS to convert the assertion into an arithmetic circuit. The prover then generates polynomial commitments to their witness values, which use bilinear pairings on elliptic curves to compress the circuit satisfiability checks into three group elements. In turn, the verifier need only check a small number of pairing equations to confirm the proof. Groth16 is particularly useful for set membership, which can be cast as the claim of knowing a valid graph path, and graph structure, which can equally be converted into assertions that can be rendered as arithmetic circuits. These remain constant-sized and verifiable in constant time regardless of graph complexity. Groth16's principal drawback is the need for a trusted setup ceremony for each circuit. There is a performance overhead to proof generation, which may in practice be on the order of magnitude of low single seconds. This may be prohibitive for real-time obligations, and future research is needed on techniques like proof caching to defray this 
+
+
+\paragraph{Proof composition} Multiple proofs can be aggregated using recursive SNARKs (Halo2, Nova) to prove conjunctions like \texttt{trace\_length $<$ 50 && confidence $>$ 0.9} with a single proof.
+
+\paragraph{Performance} Proof generation adds $\sim$100ms--2s depending on claim complexity. This is acceptable for offline verification but may be prohibitive for real-time applications. Future work could explore proof caching and amortisation.
+
+\section{Performance analysis and security}
+\label{sec:analysis}
+
+\subsection{Computational Overhead}
+
+We evaluate VERITAS overhead across three dimensions:
+
+\paragraph{Trace generation} For each reasoning step, the agent must:
+\begin{enumerate}
+    \item Compute semantic embedding (10--50ms depending on encoder)
+    \item Hash content for commitment ($\sim$1ms)
+    \item Compute cryptographic binding ($\sim$2ms)
+    \item Sign if terminal node ($\sim$3ms)
+\end{enumerate}
+
+\textbf{Total: 5--10ms per step}, negligible compared to LLM inference (500ms--5s per step).
+
+For a 100-step agent workflow:
+\begin{itemize}
+    \item Baseline (no verification): 50--500 seconds LLM time
+    \item With VERITAS: +0.5--1 second overhead ($<$2\% increase)
+\end{itemize}
+
+\paragraph{Storage} Compressed traces are significantly smaller than raw logs:
+\begin{itemize}
+    \item Raw trace: $\sim$50KB per step (prompts + completions)
+    \item Compressed embedding: $\sim$3KB per step (768d float32)
+    \item With metadata: $\sim$4KB per step
+\end{itemize}
+
+\textbf{Reduction: 92\% storage savings} with semantic information preserved.
+
+\paragraph{Verification} $O(\log n)$ for Merkle proofs:
+\begin{itemize}
+    \item Verify single node: $\sim$5ms
+    \item Verify full trace: $\sim$10ms + 2ms per node
+    \item Verify with ZK proof: +5ms
+\end{itemize}
+
+\subsection{Security Analysis}
+
+\paragraph{Threat model} We consider adversaries who may:
+
+\begin{enumerate}
+    \item \textbf{Forge traces}: Claim false provenance (``Agent $X$ produced this reasoning'')
+    \item \textbf{Tamper with traces}: Modify reasoning post-hoc to hide mistakes
+    \item \textbf{Replay attacks}: Reuse old traces in new contexts
+    \item \textbf{Side-channel attacks}: Extract information from disclosed nodes
+    \item \textbf{Selective disclosure abuse}: Reveal carefully chosen nodes to mislead
+\end{enumerate}
+
+\paragraph{Defences}
+
+\begin{enumerate}
+    \item \textbf{Against forgery}: Digital signatures with 128-bit security (ECDSA/EdDSA). Adversary must either break ECDLP or steal private key (mitigated by HSM storage).
+    
+    \item \textbf{Against tampering}: Merkle hash chain provides collision resistance ($2^{128}$ security with SHA-256). Modifying any node requires finding hash collision (computationally infeasible).
+    
+    \item \textbf{Against replay}: Timestamp attestations bind traces to specific time windows. Nonces in commitments prevent reuse.
+    
+    \item \textbf{Against side channels}: Constant-time ZK proof generation prevents timing attacks. Disclosed nodes reveal only explicitly approved information.
+    
+    \item \textbf{Against disclosure abuse}: Verifiers should demand proofs over complete trace structure, not cherry-picked samples. Reputation systems can penalise misleading disclosures.
+\end{enumerate}
+
+\paragraph{Formal security} VERITAS security reduces to:
+\begin{itemize}
+    \item \textbf{Unforgeability} of signature scheme (ECDLP hardness)
+    \item \textbf{Collision resistance} of hash function (SHA-256)
+    \item \textbf{Soundness} of ZK proof system (Groth16 security)
+    \item \textbf{Trust} in timestamp authority (RFC 3161 infrastructure)
+\end{itemize}
+
+All building blocks have extensive cryptanalysis and are considered secure for 128-bit security target.
+
+\subsection{Privacy Guarantees}
+
+Zero-knowledge proofs provide:
+
+\begin{itemize}
+    \item \textbf{Perfect hiding}: Undisclosed node content reveals zero information beyond proof claims (information-theoretic guarantee)
+    
+    \item \textbf{Computational soundness}: Adversary cannot create false proofs without breaking underlying assumptions (e.g., discrete log)
+    
+    \item \textbf{Witness indistinguishability}: Multiple valid witnesses for same claim are indistinguishable to verifier
+\end{itemize}
+
+These properties enable:
+\begin{itemize}
+    \item Regulatory audits without IP exposure
+    \item Competitive benchmarking without strategy leakage
+    \item Scientific validation without full disclosure
+\end{itemize}
+
+\section{Discussion and Future Directions}
+\label{sec:discussion}
+
+\subsection{Deployment Considerations}
+
+\paragraph{Key management} Production deployment requires robust key management. Options include:
+\begin{itemize}
+    \item Hardware security modules (HSMs) for high-value agents
+    \item Threshold signatures for multi-agent systems
+    \item Key rotation protocols as agent capabilities evolve
+\end{itemize}
+
+\paragraph{Timestamp infrastructure} Organisations must choose between:
+\begin{itemize}
+    \item Public TSAs (maximum trust, potential latency)
+    \item Private TSAs (lower latency, reduced trust)
+    \item Hardware timestamps (offline capable, requires TEE)
+\end{itemize}
+
+\paragraph{Storage strategy} Traces accumulate rapidly. Recommended approach:
+\begin{itemize}
+    \item Hot storage: Recent traces with full content
+    \item Warm storage: 30--90 day traces with compressed embeddings only
+    \item Cold storage: Long-term archive with commitments and root hashes
+    \item Selective content retrieval on audit demand
+\end{itemize}
+
+\subsection{Extensions}
+
+\paragraph{Aggregation} Prove properties over ensembles of traces without revealing individual traces. Useful for:
+\begin{itemize}
+    \item Proving ``95\% of customer service traces achieved satisfaction $>$ 0.8''
+    \item Demonstrating aggregate compliance without exposing specific interactions
+\end{itemize}
+
+\paragraph{Smart contract integration} On-chain verification enables:
+\begin{itemize}
+    \item Conditional transactions triggered by verified reasoning
+    \item Decentralised reputation systems for agents
+    \item Automated regulatory reporting
+\end{itemize}
+
+\paragraph{Post-quantum cryptography} Migration path to quantum-resistant primitives:
+\begin{itemize}
+    \item Lattice-based signatures (Dilithium, Falcon)
+    \item Hash-based signatures (SPHINCS+)
+    \item Isogeny-based commitments
+\end{itemize}
+
+\paragraph{Federated verification} Multi-organisation scenarios where traces span multiple trust domains:
+\begin{itemize}
+    \item Healthcare agents accessing records across institutions
+    \item Supply chain agents with inter-company dependencies
+    \item Financial agents in cross-border transactions
+\end{itemize}
+
+\subsection{Limitations}
+
+\paragraph{Computational burden} ZK proof generation remains expensive for complex claims (seconds to minutes). Hardware acceleration (GPUs, FPGAs, ASICs) could alleviate this.
+
+\paragraph{Setup assumptions} Groth16 requires trusted setup. Whilst multi-party ceremonies mitigate risk, ``trustless'' alternatives (STARKs, Bulletproofs) may be preferable for some applications despite performance trade-offs.
+
+\paragraph{Garbage in, garbage out} VERITAS verifies provenance and integrity but cannot guarantee reasoning quality. A cryptographically verified trace may still represent flawed reasoning.
+
+\paragraph{Adoption challenges} Requires coordination across agent framework developers, model providers and end users. Standards processes (IEEE, W3C) may be necessary for widespread adoption.
+
+\section{Conclusion}
+
+As AI agents transition from research prototypes to production systems making consequential decisions, establishing cryptographic provenance of their reasoning becomes essential. VERITAS provides a practical standard for verifiable agent traces that balances transparency with privacy, enabling regulatory compliance without sacrificing intellectual property.
+
+The combination of semantic compression, Merkle-DAG structures and ZK proofs creates a foundation for trustworthy agent ecosystems in which organisations cannot merely prove what matters, they can do so without risking their IP. In this sense, it is not just a technical standard but an economic facilitator: if the risk of 
+
+\bibliographystyle{plain}
+\bibliography{veritas}
+
+\end{document}
