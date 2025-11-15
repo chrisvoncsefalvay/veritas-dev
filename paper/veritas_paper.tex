@@ -36,6 +36,25 @@
     captionpos=b
 }
 
+% Define JSON language for listings
+\lstdefinelanguage{json}{
+    basicstyle=\ttfamily\small,
+    numbers=left,
+    numberstyle=\tiny,
+    stepnumber=1,
+    numbersep=8pt,
+    showstringspaces=false,
+    breaklines=true,
+    frame=single,
+    backgroundcolor=\color{gray!10},
+    string=[s]{"}{"},
+    stringstyle=\color{blue},
+    comment=[l]{:},
+    commentstyle=\color{black},
+    morestring=[b]',
+    morestring=[b]"
+}
+
 % Title and author
 \title{\textbf{VERITAS: Cryptographically Verifiable Semantic Traces \\
 for AI Agent Provenance and Interoperability}}
