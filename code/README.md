@@ -102,6 +102,48 @@ compressor = TraceCompressor(embedder=embedder)
 compressor.compress_trace(trace)
 ```
 
+### 3b. `compression_advanced.py` - SOTA Compression Methods (NEW 2024)
+
+**State-of-the-art compression methods** based on recent research:
+
+**Available Methods**:
+1. **Matryoshka Representation Learning (MRL)** - 14x compression (OpenAI, Google 2024)
+2. **Product Quantization (PQ)** - 32-64x compression (FAISS, Pinecone)
+3. **Binary Hashing** - 32x compression, 25x search speedup
+4. **Scalar Quantization (int8/float16)** - 2-4x compression, >98% quality
+5. **Autoencoder** - Learned compression, domain-specific
+
+**Quick Comparison**:
+| Method | Compression | Quality | Speed | Use Case |
+|--------|-------------|---------|-------|----------|
+| **int8** (recommended) | 4x | >0.98 | Very Fast | **Default choice** |
+| Matryoshka | 3-14x | >0.95 | Fast | Production flexibility |
+| Product Quantization | 32-64x | 0.90-0.95 | Fast | Storage-critical |
+| Binary Hashing | 32x | 0.85-0.90 | Ultra-Fast | Real-time search |
+
+**Usage:**
+```python
+from compression_advanced import MatryoshkaCompressor, ScalarQuantizer, ProductQuantizer
+
+# int8 - Recommended default (4x compression, >98% quality)
+quantizer = ScalarQuantizer(mode='int8')
+codes = quantizer.compress(embedding)  # bytes
+reconstructed = quantizer.decompress(codes)
+
+# Matryoshka - Flexible compression (3-14x, production-proven)
+mrl = MatryoshkaCompressor(full_dim=768)
+compressed = mrl.compress(embedding, target_dim=256)  # 3x compression
+
+# Product Quantization - Extreme compression (32x)
+pq = ProductQuantizer(embedding_dim=768)
+pq.train(training_embeddings)  # One-time training
+codes = pq.compress(embedding)  # 96 bytes vs 3072 bytes!
+```
+
+**Documentation**: See `COMPRESSION_METHODS.md` for detailed comparison and recommendations.
+
+**Benchmarking**: Run `notebooks/04_compression_methods_comparison.ipynb` to compare all methods.
+
 ### 4. `serialization.py` - JSON Schema
 
 Implements Section 2.4 (JSON Schema):
