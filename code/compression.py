@@ -28,33 +28,33 @@ class CompressionConfig:
 
 class SemanticEmbedder:
     """
-    Semantic embedding interface.
+    Semantic embedding interface using sentence-transformers.
 
-    In production, this would use sentence-transformers or similar.
-    For the reference implementation, we provide a simple mock.
+    Uses sentence-transformers library for production-grade semantic embeddings.
     """
 
-    def __init__(self, model_name: str = "mock", embedding_dim: int = 768):
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", embedding_dim: int = 768):
         """
-        Initialize embedder.
+        Initialise embedder.
 
         Args:
             model_name: Name of embedding model (e.g., "all-MiniLM-L6-v2")
-            embedding_dim: Dimension of output embeddings
+            embedding_dim: Dimension of output embeddings (ignored if using real model)
         """
         self.model_name = model_name
         self.embedding_dim = embedding_dim
         self._real_model = None
 
-        # Try to load real model if available
-        if model_name != "mock":
-            try:
-                from sentence_transformers import SentenceTransformer
-                self._real_model = SentenceTransformer(model_name)
-                self.embedding_dim = self._real_model.get_sentence_embedding_dimension()
-            except ImportError:
-                print(f"Warning: sentence-transformers not available, using mock embeddings")
-                print(f"Install with: pip install sentence-transformers")
+        # Load sentence-transformers model
+        try:
+            from sentence_transformers import SentenceTransformer
+            self._real_model = SentenceTransformer(model_name)
+            self.embedding_dim = self._real_model.get_sentence_embedding_dimension()
+        except ImportError as e:
+            raise ImportError(
+                "sentence-transformers is required for semantic embeddings. "
+                "Install with: pip install sentence-transformers"
+            ) from e
 
     def embed(self, text: str) -> List[float]:
         """
@@ -66,18 +66,9 @@ class SemanticEmbedder:
         Returns:
             Embedding vector as list of floats
         """
-        if self._real_model is not None:
-            # Use real model
-            embedding = self._real_model.encode(text, convert_to_numpy=True)
-            return embedding.tolist()
-        else:
-            # Mock embedding: hash-based deterministic random vector
-            # This is NOT semantically meaningful, just for demonstration
-            np.random.seed(hash(text) % (2**32))
-            embedding = np.random.randn(self.embedding_dim)
-            # Normalize
-            embedding = embedding / np.linalg.norm(embedding)
-            return embedding.tolist()
+        # Use sentence-transformers model
+        embedding = self._real_model.encode(text, convert_to_numpy=True)
+        return embedding.tolist()
 
 
 class EmbeddingCompressor:
@@ -187,10 +178,10 @@ class TraceCompressor:
         Initialize trace compressor.
 
         Args:
-            embedder: Semantic embedder (default: mock embedder)
+            embedder: Semantic embedder (default: all-MiniLM-L6-v2 model)
             compressor: Embedding compressor (default: simple truncation)
         """
-        self.embedder = embedder or SemanticEmbedder("mock")
+        self.embedder = embedder or SemanticEmbedder()
         self.compressor = compressor or EmbeddingCompressor(CompressionConfig())
 
     def compress_node(self, node: Node) -> None:
